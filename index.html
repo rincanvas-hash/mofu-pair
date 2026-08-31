@@ -124,7 +124,14 @@
     background:rgba(255,255,255,0.85);
     border-radius:18px; padding:1em 1.1em 1.2em; width:min(430px,92vw);
   }
-  #calTitle{ font-weight:bold; margin-bottom:0.55em; text-align:left; font-size:1.15rem;}
+  .cal-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:0.55em;}
+  #calTitle{ font-weight:bold; font-size:1.15rem;}
+  .cal-nav{
+    border:none; background:#f7f1e4; border-radius:10px;
+    width:38px; height:32px; cursor:pointer; font-size:0.85rem; color:#8a7d6e;
+    font-family:inherit;
+  }
+  .cal-nav:active{ transform:scale(0.92);}
   .cal-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:5px;}
   .cal-wd{ height:5px; border-radius:3px; background:#d8cdb9; margin-bottom:2px;}
   .cal-wd.sun{ background:#f0a0ae;}
@@ -365,7 +372,11 @@
   <div class="diffs" id="diffBtns"></div>
 
   <div id="calendar">
-    <div id="calTitle"></div>
+    <div class="cal-head">
+      <button class="cal-nav" id="calPrev">◀</button>
+      <div id="calTitle"></div>
+      <button class="cal-nav" id="calNext">▶</button>
+    </div>
     <div class="cal-grid" id="calGrid"></div>
   </div>
 
@@ -524,11 +535,15 @@ function buildTitle(){
     b.addEventListener("click", ()=>startGame(i));
     wrap.appendChild(b);
   });
+  calView = null; // ホームに戻ったら今月に戻す
   buildCalendar();
 }
+let calView = null; // 表示中の月 {y, m}
 function buildCalendar(){
   const now = new Date();
-  document.getElementById("calTitle").textContent = `${now.getFullYear()} / ${now.getMonth()+1}`;
+  if(!calView) calView = {y:now.getFullYear(), m:now.getMonth()};
+  const {y, m} = calView;
+  document.getElementById("calTitle").textContent = `${y} / ${m+1}`;
   const grid = document.getElementById("calGrid");
   grid.innerHTML = "";
   // 曜日ヘッダー(日=ピンク、土=ブルーのダッシュ)
@@ -537,9 +552,10 @@ function buildCalendar(){
     h.className = "cal-wd"+(w===0?" sun":w===6?" sat":"");
     grid.appendChild(h);
   }
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
-  const days = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  const first = new Date(y, m, 1);
+  const days = new Date(y, m+1, 0).getDate();
   const all = loadMedals();
+  const isThisMonth = (y===now.getFullYear() && m===now.getMonth());
   for(let i=0;i<first.getDay();i++){
     const c = document.createElement("div"); c.className="cal-day blank"; grid.appendChild(c);
   }
@@ -547,14 +563,22 @@ function buildCalendar(){
     const c = document.createElement("div");
     const wd = (first.getDay()+d-1)%7;
     c.className = "cal-day"+(wd===0?" sun":wd===6?" sat":"");
-    const key = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    if(d===now.getDate()) c.classList.add("today");
+    const key = `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    if(isThisMonth && d===now.getDate()) c.classList.add("today");
     const ms = all[key]||{};
     const dots = DIFFS.map(x=>`<i class="${ms[x.id]||""}"></i>`).join("");
     c.innerHTML = `<span>${d}</span><span class="dots">${dots}</span>`;
     grid.appendChild(c);
   }
 }
+document.getElementById("calPrev").addEventListener("click", ()=>{
+  calView.m--; if(calView.m<0){ calView.m=11; calView.y--; }
+  buildCalendar();
+});
+document.getElementById("calNext").addEventListener("click", ()=>{
+  calView.m++; if(calView.m>11){ calView.m=0; calView.y++; }
+  buildCalendar();
+});
 
 /* ================= デモ(2×3・二角取りを見せる) ================= */
 let demoTimers = [];
@@ -890,29 +914,42 @@ function reseat(){
   sfx.shuffle();
   const toast = document.getElementById("shuffleToast");
   toast.classList.add("show");
+  // ① もぞもぞ(たっぷり見せる)
   document.querySelectorAll(".tile").forEach(t=>t.classList.add("wiggle"));
   setTimeout(()=>{
+    // ② 新しい席順を決める(牌の入れ替え=順列。動く牌が必ず出るまで)
     const pos=[], vals=[];
     for(let y=0;y<rows;y++) for(let x=0;x<cols;x++)
       if(board[y][x]){ pos.push({x,y}); vals.push(board[y][x]); }
-    let tries=0;
+    let perm=null, tries=0;
     do{
-      for(let i=vals.length-1;i>0;i--){
+      perm = pos.map((_,i)=>i);
+      for(let i=perm.length-1;i>0;i--){
         const j=Math.floor(Math.random()*(i+1));
-        [vals[i],vals[j]]=[vals[j],vals[i]];
+        [perm[i],perm[j]]=[perm[j],perm[i]];
       }
-      pos.forEach((p,i)=>{ board[p.y][p.x]=vals[i]; });
+      pos.forEach((p,i)=>{ board[p.y][p.x]=vals[perm[i]]; });
       tries++;
     }while(!hasMove() && tries<60);
-    renderBoard();
-    document.querySelectorAll(".tile").forEach(t=>{
-      t.classList.add("wiggle");
-      setTimeout(()=>t.classList.remove("wiggle"), 500);
+    // ③ 牌がすべって新しい席へ歩いていく(移動が見える)
+    sfx.shuffle();
+    pos.forEach((p,i)=>{
+      const from = pos[perm[i]]; // この牌が元いた席
+      const el = document.getElementById(tileId(from.x,from.y));
+      if(!el) return;
+      el.classList.remove("wiggle");
+      el.style.zIndex = 2 + (i%4);
+      el.style.left = (padX + p.x*tileW + 2)+"px";
+      el.style.top  = (padY + p.y*tileH + 2)+"px";
     });
-    toast.classList.remove("show");
-    selected = null;
-    busy = false;
-  }, 900);
+    // ④ 移動が終わってから席を確定
+    setTimeout(()=>{
+      renderBoard();
+      toast.classList.remove("show");
+      selected = null;
+      busy = false;
+    }, 700);
+  }, 1400);
 }
 
 /* ================= 金づち ================= */
